@@ -115,6 +115,13 @@ It stays as you turn pages.")
   :type 'number
   :group 'readq-comic)
 
+(defcustom readq-comic-max-pixels 24000000
+  "Most pixels a zoomed page may have; zooming in stops there.
+Emacs keeps the page shown decoded, at 4 bytes a pixel: the default,
+24 million pixels (6000x4000), takes about 100 MB."
+  :type 'integer
+  :group 'readq-comic)
+
 (defvar-local readq-comic--cache nil
   "Recently shown pages of this buffer's comic, as (ENTRY . DATA), newest first.")
 
@@ -348,7 +355,8 @@ window stays there."
                     (width (car (readq-comic--image-size)))
                     (data (readq-comic--data readq-comic--page))
                     (fit (readq-comic--fit-image data (image-type-from-data data) window)))
-          (setq readq-comic--zoom (/ width (float (max 1 (car (image-size fit t)))))))
+          (setq readq-comic--zoom (/ width (float (max 1 (car (image-size fit t))))))
+          (image-flush fit))
         (if (zerop (window-old-body-pixel-width window))
             ;; A new window: nothing to keep in the middle.
             (readq-comic--show-keeping window '(0 . 0))
@@ -395,22 +403,35 @@ buffer, and show the page from its top there."
                   (and (eq (window-buffer) (current-buffer)) (selected-window))
                   (get-buffer-window (current-buffer) t))))
     (setq readq-comic--page page)
-    (erase-buffer)
-    (if (zerop n)
-        (insert "This comic has no pages that readq-comic can show.")
-      (let* ((data (readq-comic--data page))
-             (type (image-type-from-data data))
-             (image (readq-comic--fit-image data type win)))
-        (when (and image (/= readq-comic--zoom 1))
-          ;; Zoom from the size the page has when it fits.
-          (setq image (create-image data type t
-                                    :width (max 1 (round (* readq-comic--zoom
-                                                            (car (image-size image t))))))))
-        (if image
-            (insert-image image (format "[page %d]" page))
-          (insert (format "[Page %d of %d: %s]" page n
-                          (if type "this Emacs can't show images here"
-                            "not an image Emacs can show"))))))
+    (let ((old (readq-comic--shown-image))
+          new)
+      (erase-buffer)
+      (if (zerop n)
+          (insert "This comic has no pages that readq-comic can show.")
+        (let* ((data (readq-comic--data page))
+               (type (image-type-from-data data))
+               (image (readq-comic--fit-image data type win)))
+          (when (and image (/= readq-comic--zoom 1))
+            ;; Zoom from the size the page has when it fits, within
+            ;; `readq-comic-max-pixels'.
+            (let* ((fit (prog1 (image-size image t) (image-flush image)))
+                   (most (sqrt (/ readq-comic-max-pixels
+                                  (float (max 1 (* (car fit) (cdr fit))))))))
+              (when (> readq-comic--zoom most)
+                (setq readq-comic--zoom (max 1.0 most)))
+              (setq image (create-image data type t
+                                        :width (max 1 (round (* readq-comic--zoom (car fit))))))))
+          (setq new image)
+          (if image
+              (insert-image image (format "[page %d]" page))
+            (insert (format "[Page %d of %d: %s]" page n
+                            (if type "this Emacs can't show images here"
+                              "not an image Emacs can show"))))))
+      ;; Let go of the page shown before at once: a zoomed page can take
+      ;; hundreds of megabytes, which Emacs would otherwise keep for
+      ;; `image-cache-eviction-delay'.
+      (when (and old (not (equal old new)))
+        (image-flush old)))
     (goto-char (point-min))
     (when win
       (set-window-vscroll win 0 t)
@@ -453,10 +474,15 @@ buffer, and show the page from its top there."
   (interactive)
   (readq-comic-goto-page (length readq-comic--pages)))
 
+(defun readq-comic--shown-image ()
+  "Return the image of the page shown in this buffer, or nil."
+  (let ((img (get-text-property (point-min) 'display)))
+    (and (eq (car-safe img) 'image) img)))
+
 (defun readq-comic--image-size ()
   "Return the size in pixels of the page shown, as (WIDTH . HEIGHT), or nil."
-  (when-let* ((img (get-text-property (point-min) 'display)))
-    (and (eq (car-safe img) 'image) (image-size img t))))
+  (when-let* ((img (readq-comic--shown-image)))
+    (image-size img t)))
 
 (defun readq-comic--image-height ()
   "Return the height in pixels of the page shown, or nil."
@@ -577,9 +603,13 @@ the mouse of EVENT, or else the middle of the window, stays where it is."
   (let* ((pos (and (consp event) (event-start event)))
          (win (if (windowp (posn-window pos)) (posn-window pos) (selected-window))))
     (with-selected-window win
-      (setq readq-comic--zoom (max 0.25 (min 8.0 (funcall zoom readq-comic--zoom))))
-      (readq-comic--show-keeping win (and pos (posn-x-y pos)))
-      (message "Zoom %d%%" (round (* 100 readq-comic--zoom))))))
+      (let ((wanted (max 0.25 (min 8.0 (funcall zoom readq-comic--zoom)))))
+        (setq readq-comic--zoom wanted)
+        (readq-comic--show-keeping win (and pos (posn-x-y pos)))
+        (message "Zoom %d%%%s" (round (* 100 readq-comic--zoom))
+                 (if (< readq-comic--zoom wanted)
+                     " (the most for this page: see `readq-comic-max-pixels')"
+                   ""))))))
 
 (defun readq-comic--show-keeping (win &optional at to)
   "Show the page again in WIN, moving the point of the page under AT to TO.

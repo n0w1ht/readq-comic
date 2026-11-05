@@ -50,6 +50,7 @@ files; readq-comic looks at the contents, not the name.
 |---|---|---|
 | `readq-comic-fit` | `page` | how a page fits the window at first: `page` (all of it) or `width` |
 | `readq-comic-zoom-step` | `1.25` | how much each zoom in or out zooms |
+| `readq-comic-max-pixels` | 24 million | the most pixels a zoomed page may have (about 100 MB of memory); zooming in stops there |
 | `readq-comic-program` | nil (find one) | the archiver: 7-Zip, bsdtar, unar, unzip or unrar |
 
 ## For other programs
