@@ -1,0 +1,7 @@
+comic.cbz             A comic of four 20x30 PNG pages, "Chapter 1/page1.png",
+                      "page2.png", "page10.png" and "cover.png", plus a text
+                      file and a macOS "__MACOSX/._cover.png" that are not pages.
+comic.cb7             The same pages in a 7z archive, without the extras.
+comic-unicode.cbz     Two pages named "café/页 [1].png" and "café/页 [2].png":
+                      not ASCII, and with brackets, which archivers take
+                      as wildcards.
